@@ -49,7 +49,7 @@ def request_confirmation():
             flash("Formato de email inválido. Por favor, insira um endereço de email válido.")
             return redirect(url_for("register.request_confirmation"))
 
-        ip_addr = request.headers.get("X-Real-IP")
+        ip_addr = request.headers.get("X-Real-IP") or request.remote_addr or "127.0.0.1"
 
         if ip_addr and isIpBlacklisted(ip_addr):
             flash("Este IP não pode fazer mais pedidos.")
@@ -66,7 +66,11 @@ def request_confirmation():
             return redirect(url_for("register.request_confirmation"))
 
         token = generate_token(email)
-        insertNewRegistrationToken(token, ip_addr, email)
+        success = insertNewRegistrationToken(token, ip_addr, email)
+        if success != "Insert successful":
+             flash("Erro ao processar o pedido. Por favor tente mais tarde.")
+             print(f"Error inserting registration token: {success}")
+             return redirect(url_for("register.request_confirmation"))
 
         confirm_url = url_for("register.confirm_email", token=token, _external=True)
         unsubscribe_url = url_for("register.unsubscribe", token=token, _external=True)
