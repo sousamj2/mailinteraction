@@ -30,7 +30,8 @@ def generate_short_token(email, length=10):
     
     # Save to database
     ip_address = request.remote_addr or "0.0.0.0"
-    insertNewRegistrationToken(code, ip_address, email)
+    status = insertNewRegistrationToken(code, ip_address, email)
+    print(f"DEBUG RESUME: Token insertion status for {code}: {status}", flush=True)
     
     return code
 
@@ -43,23 +44,28 @@ def confirm_short_token(code, expiration_minutes=5):
     if not code:
         return False
         
-    # Search for token (case-insensitive in DB usually, but we'll force upper)
-    token_data = getRegistrationTokenByToken(code.upper())
-    
-    if not token_data:
-        return False
+    try:
+        # Search for token (case-insensitive in DB usually, but we'll force upper)
+        token_data = getRegistrationTokenByToken(code.upper())
+        print(f"DEBUG RESUME: DB returned for {code}: {token_data}", flush=True)
         
-    # Check expiration
-    created_at = token_data.get('created_at')
-    if isinstance(created_at, str):
-        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
-        
-    if datetime.now() - created_at > timedelta(minutes=expiration_minutes):
+        if not token_data:
+            return False
+            
+        # Check expiration
+        created_at = token_data.get('created_at')
+        if isinstance(created_at, str):
+            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+            
+        if datetime.utcnow() - created_at > timedelta(minutes=expiration_minutes):
+            deleteRegistrationToken(code.upper())
+            return False
+            
+        # Valid token! Delete it so it can't be reused
+        email = token_data.get('email')
         deleteRegistrationToken(code.upper())
-        return False
         
-    # Valid token! Delete it so it can't be reused
-    email = token_data.get('email')
-    deleteRegistrationToken(code.upper())
-    
-    return email
+        return email
+    except Exception as e:
+        print(f"DEBUG RESUME: Error in confirm_short_token: {str(e)}")
+        return False
