@@ -84,7 +84,7 @@ def request_confirmation():
         """
 
         send_email(subject, email, html_message)
-        flash("A confirmation email has been sent to your address.")
+        flash(f"A confirmation email has been sent to your address (from {current_app.config['MAIL_DEFAULT_SENDER']}).")
         flash("Please check your inbox and spam/junk folder.")
         return redirect(url_for("register.request_confirmation"))
 
