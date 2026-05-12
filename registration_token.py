@@ -30,8 +30,7 @@ def generate_short_token(email, length=10):
     
     # Save to database
     ip_address = request.remote_addr or "0.0.0.0"
-    status = insertNewRegistrationToken(code, ip_address, email)
-    print(f"DEBUG RESUME: Token insertion status for {code}: {status}", flush=True)
+    insertNewRegistrationToken(code, ip_address, email)
     
     return code
 
@@ -45,9 +44,8 @@ def confirm_short_token(code, expiration_minutes=5):
         return False
         
     try:
-        # Search for token (case-insensitive in DB usually, but we'll force upper)
+        # Search for token
         token_data = getRegistrationTokenByToken(code.upper())
-        print(f"DEBUG RESUME: DB returned for {code}: {token_data}", flush=True)
         
         if not token_data:
             return False
