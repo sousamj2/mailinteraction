@@ -62,6 +62,7 @@ def send_email(subject: str, email_to: str, html_message: str, sender: str = Non
     """
     sender = sender or _sender_from_request()
     mail_system = current_app.config.get('MAILSYSTEM', 'GCP')
+    print(f"DEBUG: mail_system value is '{mail_system}'", flush=True)
 
     if mail_system == 'LOCAL':
         local_relay_url = current_app.config.get('LOCAL_MAIL_RELAY_URL')
