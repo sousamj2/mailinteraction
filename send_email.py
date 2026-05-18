@@ -65,27 +65,49 @@ def send_email(subject: str, email_to: str, html_message: str, sender: str = Non
     print(f"DEBUG: mail_system value is '{mail_system}'", flush=True)
 
     if mail_system == 'LOCAL':
-        local_relay_url = current_app.config.get('LOCAL_MAIL_RELAY_URL')
+        relay_host = current_app.config.get('LOCAL_MAIL_RELAY_HOST')
         
-        if local_relay_url:
-            print(f"MAIL: Forwarding email to local relay: {local_relay_url}", flush=True)
-            payload = {
+        if relay_host:
+            # EC2-2 case: SSH into EC2-1 and run the Flask CLI send-email command
+            relay_key = current_app.config.get('LOCAL_MAIL_RELAY_KEY', '/home/ec2-user/.ssh/ec2_internal')
+            relay_user = current_app.config.get('LOCAL_MAIL_RELAY_USER', 'ec2-user')
+            
+            print(f"MAIL: Forwarding email via SSH to {relay_user}@{relay_host}", flush=True)
+            payload = json.dumps({
                 'sender': sender,
                 'email_to': email_to,
                 'subject': subject,
                 'html_message': html_message,
-            }
+            })
+            
+            ssh_cmd = [
+                'ssh', '-i', relay_key,
+                '-o', 'ConnectTimeout=5',
+                '-o', 'StrictHostKeyChecking=no',
+                f'{relay_user}@{relay_host}',
+                'cd /var/www/appmodules/explicolivais && FLASK_APP=explicolivais.py ../app-env/bin/flask send-email'
+            ]
+            
             try:
-                response = requests.post(local_relay_url, json=payload, timeout=10)
-                if response.status_code == 200:
-                    print(f"MAIL: Email forwarded successfully to {email_to}.", flush=True)
+                result = subprocess.run(
+                    ssh_cmd,
+                    input=payload,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    print(f"MAIL: Email forwarded successfully via SSH to {email_to}.", flush=True)
                     return
                 else:
-                    print(f"MAIL ERROR: Local relay returned {response.status_code}: {response.text}", flush=True)
-                    raise RuntimeError(f"Local email relay failed: {response.text}")
-            except requests.exceptions.RequestException as e:
-                print(f"MAIL ERROR: Connection to local relay failed: {e}", flush=True)
-                raise RuntimeError(f"Failed to connect to local email relay: {e}")
+                    print(f"MAIL ERROR: SSH relay failed (rc={result.returncode}): {result.stderr}", flush=True)
+                    raise RuntimeError(f"SSH email relay failed: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                print("MAIL ERROR: SSH relay timed out after 30s.", flush=True)
+                raise RuntimeError("SSH email relay timed out.")
+            except Exception as e:
+                print(f"MAIL ERROR: SSH relay failed: {e}", flush=True)
+                raise RuntimeError(f"Failed to relay email via SSH: {e}")
         else:
             print(f"MAIL: Sending email locally — {sender} → {email_to}", flush=True)
             
