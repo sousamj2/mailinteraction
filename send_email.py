@@ -2,6 +2,9 @@ import json
 import subprocess
 from flask import current_app, request
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 
 def _get_identity_token(url):
@@ -55,12 +58,73 @@ def _sender_from_request():
 def send_email(subject: str, email_to: str, html_message: str, sender: str = None,
                server: str = None, port: int = None, password: str = None) -> None:
     """
-    Send an HTML email by invoking a Google Cloud Function relay.
-    
-    This is used to bypass IPv6 connectivity issues on AWS EC2 by offloading 
-    the SMTP connection to a GCP function that has IPv4 egress.
+    Send an HTML email. Supports GCP relay and LOCAL sending (with cross-instance relay).
     """
     sender = sender or _sender_from_request()
+    mail_system = current_app.config.get('MAILSYSTEM', 'GCP')
+
+    if mail_system == 'LOCAL':
+        local_relay_url = current_app.config.get('LOCAL_MAIL_RELAY_URL')
+        
+        if local_relay_url:
+            print(f"MAIL: Forwarding email to local relay: {local_relay_url}", flush=True)
+            payload = {
+                'sender': sender,
+                'email_to': email_to,
+                'subject': subject,
+                'html_message': html_message,
+            }
+            try:
+                response = requests.post(local_relay_url, json=payload, timeout=10)
+                if response.status_code == 200:
+                    print(f"MAIL: Email forwarded successfully to {email_to}.", flush=True)
+                    return
+                else:
+                    print(f"MAIL ERROR: Local relay returned {response.status_code}: {response.text}", flush=True)
+                    raise RuntimeError(f"Local email relay failed: {response.text}")
+            except requests.exceptions.RequestException as e:
+                print(f"MAIL ERROR: Connection to local relay failed: {e}", flush=True)
+                raise RuntimeError(f"Failed to connect to local email relay: {e}")
+        else:
+            print(f"MAIL: Sending email locally — {sender} → {email_to}", flush=True)
+            
+            smtp_port = 465  # Hardcoded as in gcloud function
+            if 'mjcrafts' in sender.lower():
+                smtp_server = 'srv9.mychrome.pt'
+                smtp_password = current_app.config.get('MAIL_PASSWORD')  # Loaded from MC_MAIL_PASSWORD
+                smtp_user = sender
+            else:
+                smtp_server = 'webdomain02.dnscpanel.com'
+                smtp_password = current_app.config.get('ALT_MAIL_PASSWORD')  # Loaded from EXPL_MAIL_PASSWORD
+                smtp_user = sender
+
+            if not smtp_server or not smtp_password:
+                print("MAIL ERROR: Local SMTP credentials missing.", flush=True)
+                raise RuntimeError("Local SMTP credentials missing.")
+
+            try:
+                msg = MIMEMultipart()
+                msg['From'] = sender
+                msg['To'] = email_to
+                msg['Subject'] = subject
+                msg.attach(MIMEText(html_message, 'html'))
+
+                if smtp_port == 465:
+                    with smtplib.SMTP_SSL(smtp_server, smtp_port) as smtp:
+                        smtp.login(smtp_user, smtp_password)
+                        smtp.send_message(msg)
+                else:
+                    with smtplib.SMTP(smtp_server, smtp_port) as smtp:
+                        smtp.starttls()
+                        smtp.login(smtp_user, smtp_password)
+                        smtp.send_message(msg)
+                print(f"MAIL: Email sent successfully to {email_to}.", flush=True)
+                return
+            except Exception as e:
+                print(f"MAIL ERROR: Local send failed: {e}", flush=True)
+                raise RuntimeError(f"Local email send failed: {e}")
+
+    # Default to GCP relay
     relay_url = current_app.config.get('GOOGLE_MAIL_RELAY_URL')
     
     if not relay_url:
@@ -87,7 +151,6 @@ def send_email(subject: str, email_to: str, html_message: str, sender: str = Non
     }
 
     try:
-        # Increase timeout as SMTP over relay can be slow
         response = requests.post(relay_url, json=payload, headers=headers, timeout=30)
         
         if response.status_code == 200:
